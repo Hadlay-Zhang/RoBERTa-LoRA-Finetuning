@@ -1,0 +1,12 @@
+transformers
+datasets
+evaluate
+accelerate
+peft
+trl
+bitsandbytes
+torch
+pandas
+scikit-learn
+nvidia-ml-py3
+nltk
