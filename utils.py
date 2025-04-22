@@ -168,76 +168,91 @@ def preprocess_dataset_text(dataset, text_column):
     print(f"Text cleaning completed for {text_column} column.")
     return cleaned_dataset
 
-def plot_training_curves(output_dir, log_filename="metrics_log.jsonl", plot_filename="training_curves.png"):
-    """Reads the metrics log file (from callback) and plots training curves."""
+def plot_training_curves(output_dir, log_filename="metrics_log.jsonl", plot_filename="training_curves_dual_axis.png"):
+    """Plots loss (train/eval) and eval accuracy on a single plot with dual y-axes."""
     log_file_path = os.path.join(output_dir, log_filename)
     plot_file_path = os.path.join(output_dir, plot_filename)
 
     if not os.path.exists(log_file_path):
-        print(f"Error: Metrics log file '{log_filename}' not found in {output_dir}")
+        print(f"Error: Log file not found: {log_file_path}")
         return
 
-    # turn into a DataFrame
     metrics_data = []
-    try:
-        with open(log_file_path, "r") as f:
-            for line in f:
-                try:
-                    metrics_data.append(json.loads(line))
-                except json.JSONDecodeError:
-                    print(f"Warning: Skipping invalid JSON line in {log_file_path}: {line.strip()}")
-        if not metrics_data:
-            print(f"No data found in metrics log file: {log_file_path}")
-            return
-        df = pd.DataFrame(metrics_data)
-        df['epoch'] = pd.to_numeric(df['epoch'], errors='coerce')
-        df.dropna(subset=['epoch'], inplace=True)
-        df = df.sort_values(by=["epoch", "step"]).drop_duplicates(subset=['epoch'], keep='last')
-    except Exception as e:
-        print(f"Error reading or parsing metrics log file {log_file_path}: {e}")
+    with open(log_file_path, "r") as f:
+        for line in f:
+            try:
+                metrics_data.append(json.loads(line))
+            except json.JSONDecodeError:
+                print(f"Warning: Skipping invalid JSON line: {line.strip()}")
+    if not metrics_data:
+        print(f"No data in log file: {log_file_path}")
         return
+    df = pd.DataFrame(metrics_data)
+    df['epoch'] = pd.to_numeric(df['epoch'], errors='coerce')
+    df.dropna(subset=['epoch'], inplace=True)
+    # sort and keep last entry per epoch for plot
+    df = df.sort_values(by=["epoch", "step"]).drop_duplicates(subset=['epoch'], keep='last')
 
     if df.empty:
-        print("No valid metric data found to plot.")
+        print("No valid metric data to plot.")
         return
 
-    print(f"Plotting metrics from {len(df)} data points found in {log_filename}...")
+    print(f"Plotting metrics from {len(df)} points in {log_filename}...")
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharex=True) # 2 rows, 1 column
+    # Create figure and axes (Loss: ax1 left, Accuracy: ax2 right)
+    fig, ax1 = plt.subplots(figsize=(12, 7))
+    ax2 = ax1.twinx()
 
-    # loss
+    lines = []
+    labels = []
+
+    # loss on ax1
+    color_train_loss = 'tab:blue'
+    color_eval_loss = 'tab:orange'
     if 'train_loss' in df.columns and 'eval_loss' in df.columns:
         loss_df = df[['epoch', 'train_loss', 'eval_loss']].dropna()
         if not loss_df.empty:
-            axes[0].plot(loss_df['epoch'], loss_df['train_loss'], label='Train Loss (Callback Eval)', marker='o', linestyle='-')
-            axes[0].plot(loss_df['epoch'], loss_df['eval_loss'], label='Eval Loss (Callback Eval)', marker='x', linestyle='--')
-            axes[0].set_ylabel("Loss")
-            axes[0].set_title("Training & Evaluation Loss vs. Epochs (Callback Log)")
-            axes[0].legend()
-            axes[0].grid(True, linestyle=':')
-        else:
-            print("Warning: No non-null loss data to plot.")
+            line1, = ax1.plot(loss_df['epoch'], loss_df['train_loss'], label='Train Loss', marker='o', linestyle='-', color=color_train_loss)
+            line2, = ax1.plot(loss_df['epoch'], loss_df['eval_loss'], label='Eval Loss', marker='x', linestyle='--', color=color_eval_loss)
+            lines.extend([line1, line2])
+            labels.extend(['Train Loss', 'Eval Loss'])
 
-    # accuracy
-    if 'train_accuracy' in df.columns and 'eval_accuracy' in df.columns:
-        acc_df = df[['epoch', 'train_accuracy', 'eval_accuracy']].dropna()
+    ax1.set_xlabel("Epochs")
+    ax1.set_ylabel("Loss", color=color_train_loss)
+    ax1.tick_params(axis='y', labelcolor=color_train_loss)
+    ax1.grid(True, axis='x', linestyle=':')
+
+    # accuracy on ax2
+    color_eval_acc = 'tab:green'
+    if 'eval_accuracy' in df.columns:
+        acc_df = df[['epoch', 'eval_accuracy']].dropna()
         if not acc_df.empty:
-            axes[1].plot(acc_df['epoch'], acc_df['train_accuracy'], label='Train Acc (Callback Eval)', marker='o', linestyle='-')
-            axes[1].plot(acc_df['epoch'], acc_df['eval_accuracy'], label='Eval Acc (Callback Eval)', marker='x', linestyle='--')
-            axes[1].set_xlabel("Epochs")
-            axes[1].set_ylabel("Accuracy")
-            axes[1].set_title("Training & Evaluation Accuracy vs. Epochs (Callback Log)")
-            axes[1].legend()
-            axes[1].grid(True, linestyle=':')
-            axes[1].set_ylim(bottom=max(0, acc_df[['train_accuracy', 'eval_accuracy']].min().min() - 0.05),
-                             top=min(1.05, acc_df[['train_accuracy', 'eval_accuracy']].max().max() + 0.05)) # Adjust y-limits reasonably
-        else:
-            print("Warning: No non-null accuracy data to plot.")
+            line3, = ax2.plot(acc_df['epoch'], acc_df['eval_accuracy'], label='Eval Accuracy', marker='^', linestyle=':', color=color_eval_acc)
+            lines.append(line3)
+            labels.append('Eval Accuracy')
 
-    plt.tight_layout()
-    try:
-        plt.savefig(plot_file_path)
-        print(f"Training curves plot saved to {plot_file_path}")
-    except Exception as e:
-        print(f"Error saving plot to {plot_file_path}: {e}")
+            ax2.set_ylabel("Accuracy", color=color_eval_acc)
+            ax2.tick_params(axis='y', labelcolor=color_eval_acc)
+            min_eval_acc = acc_df['eval_accuracy'].min()
+            max_eval_acc = acc_df['eval_accuracy'].max()
+            ax2.set_ylim(bottom=max(0, min_eval_acc - 0.05), top=min(1.05, max_eval_acc + 0.05))
+        else:
+            # set empty state for accuracy axis if no data
+            ax2.set_ylabel("Accuracy (No Data)", color=color_eval_acc)
+            ax2.tick_params(axis='y', labelcolor=color_eval_acc)
+            ax2.set_yticks([])
+    else:
+        ax2.set_ylabel("Accuracy (Missing)", color=color_eval_acc)
+        ax2.tick_params(axis='y', labelcolor=color_eval_acc)
+        ax2.set_yticks([])
+
+    ax1.set_title("Training/Eval Loss & Eval Accuracy vs. Epochs")
+    if lines: # show legend only if plots were made
+        ax1.legend(lines, labels, loc='best')
+
+    fig.tight_layout()
+
+    # save plot
+    plt.savefig(plot_file_path)
+    print(f"Dual-axis plot saved to {plot_file_path}")
     plt.close(fig)

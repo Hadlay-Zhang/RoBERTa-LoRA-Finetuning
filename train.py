@@ -8,52 +8,66 @@ import config
 import utils
 import math
 import model
+from collections import defaultdict
 
 # callback to save metrics within epoch
 class MetricsLoggerCallback(TrainerCallback):
+    """Logs metrics from Trainer's `on_log`."""
     def __init__(self, output_dir):
         super().__init__()
         self.output_dir = output_dir
         self.log_file = os.path.join(output_dir, "metrics_log.jsonl")
-        self.last_train_loss = None
-        self.last_train_acc  = None
-        self.last_train_epoch = None
+        self.step_metrics_buffer = defaultdict(dict)
+        self.last_written_step = -1 # Track the last step actually written
 
     def on_train_begin(self, args, state: TrainerState, control: TrainerControl, **kwargs):
         os.makedirs(self.output_dir, exist_ok=True)
         if os.path.exists(self.log_file):
             os.remove(self.log_file)
+        self.step_metrics_buffer.clear()
+        self.last_written_step = -1
 
-    def on_step_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
-        # save metrics at the end of each step
-        outputs = kwargs.get("outputs", None)
-        inputs  = kwargs.get("inputs",  None)
-        if outputs is None or not hasattr(outputs, "loss"):
+    def _write_log(self, step_to_write, state):
+        if step_to_write in self.step_metrics_buffer and step_to_write > self.last_written_step:
+            record_data = self.step_metrics_buffer[step_to_write]
+            current_epoch = round(record_data.get('epoch', state.epoch if state.epoch is not None else 0), 4)
+
+            final_record = {
+                "epoch": current_epoch,
+                "step": step_to_write,
+                "eval_loss": round(val, 6) if (val := record_data.get("eval_loss")) is not None else None,
+                "eval_accuracy": round(val, 6) if (val := record_data.get("eval_accuracy")) is not None else None,
+                "train_loss": round(val, 6) if (val := record_data.get("loss", record_data.get("train_loss"))) is not None else None,
+                "train_accuracy": round(val, 6) if (val := record_data.get("accuracy", record_data.get("train_accuracy"))) is not None else None,
+            }
+            with open(self.log_file, "a") as f:
+                f.write(json.dumps(final_record) + "\n")
+            self.last_written_step = step_to_write
+            # Clean up buffer for steps already written
+            keys_to_delete = [k for k in self.step_metrics_buffer if k <= step_to_write]
+            for key in keys_to_delete:
+                del self.step_metrics_buffer[key]
+
+    def on_log(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, logs=None, **kwargs):
+        if logs is None:
             return
+        current_step = state.global_step
+        if current_step > self.last_written_step + 1:
+             for step_to_check in range(self.last_written_step + 1, current_step):
+                  if step_to_check in self.step_metrics_buffer:
+                       self._write_log(step_to_check, state) # Pass state for epoch fallback
 
-        # train loss
-        self.last_train_loss = float(outputs.loss.detach().cpu())
-        # train accuracy
-        if hasattr(outputs, "logits") and inputs and "labels" in inputs:
-            logits = outputs.logits
-            labels = inputs["labels"]
-            preds  = torch.argmax(logits, dim=-1)
-            self.last_train_acc = (preds == labels).float().mean().item()
-        self.last_train_epoch = state.epoch
+        valid_logs = {k: v for k, v in logs.items() if v is not None} # Avoid overwriting with None
+        self.step_metrics_buffer[current_step].update(valid_logs)
+        if "eval_loss" in logs:
+            self._write_log(current_step, state)
 
-    def on_log(self, args, state: TrainerState, control: TrainerControl, logs=None, **kwargs):
-        if logs is None or "eval_loss" not in logs:
-            return 
-        record = {
-            "epoch":          round(logs.get("epoch", self.last_train_epoch or 0), 4),
-            "step":           state.global_step,
-            "eval_loss":      logs["eval_loss"],
-            "eval_accuracy":  logs.get("eval_accuracy"),
-            "train_loss":     round(self.last_train_loss, 6) if self.last_train_loss is not None else None,
-            "train_accuracy": round(self.last_train_acc,   6) if self.last_train_acc is not None else None,
-        }
-        with open(self.log_file, "a") as f:
-            f.write(json.dumps(record) + "\n")
+    def on_train_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
+         """Ensures logs for the final steps are written when training ends."""
+         latest_step_in_buffer = max(self.step_metrics_buffer.keys()) if self.step_metrics_buffer else -1
+         for step_to_log in range(self.last_written_step + 1, latest_step_in_buffer + 1):
+              if step_to_log in self.step_metrics_buffer:
+                   self._write_log(step_to_log, state)
 
 # callback to save the last checkpoint
 class SaveLastCheckpointCallback(TrainerCallback):
