@@ -1,4 +1,7 @@
 import torch
+import os
+import json
+import matplotlib.pyplot as plt
 import pandas as pd
 from datasets import load_dataset, Dataset, ClassLabel
 import pickle
@@ -164,3 +167,77 @@ def preprocess_dataset_text(dataset, text_column):
     
     print(f"Text cleaning completed for {text_column} column.")
     return cleaned_dataset
+
+def plot_training_curves(output_dir, log_filename="metrics_log.jsonl", plot_filename="training_curves.png"):
+    """Reads the metrics log file (from callback) and plots training curves."""
+    log_file_path = os.path.join(output_dir, log_filename)
+    plot_file_path = os.path.join(output_dir, plot_filename)
+
+    if not os.path.exists(log_file_path):
+        print(f"Error: Metrics log file '{log_filename}' not found in {output_dir}")
+        return
+
+    # turn into a DataFrame
+    metrics_data = []
+    try:
+        with open(log_file_path, "r") as f:
+            for line in f:
+                try:
+                    metrics_data.append(json.loads(line))
+                except json.JSONDecodeError:
+                    print(f"Warning: Skipping invalid JSON line in {log_file_path}: {line.strip()}")
+        if not metrics_data:
+            print(f"No data found in metrics log file: {log_file_path}")
+            return
+        df = pd.DataFrame(metrics_data)
+        df['epoch'] = pd.to_numeric(df['epoch'], errors='coerce')
+        df.dropna(subset=['epoch'], inplace=True)
+        df = df.sort_values(by=["epoch", "step"]).drop_duplicates(subset=['epoch'], keep='last')
+    except Exception as e:
+        print(f"Error reading or parsing metrics log file {log_file_path}: {e}")
+        return
+
+    if df.empty:
+        print("No valid metric data found to plot.")
+        return
+
+    print(f"Plotting metrics from {len(df)} data points found in {log_filename}...")
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharex=True) # 2 rows, 1 column
+
+    # loss
+    if 'train_loss' in df.columns and 'eval_loss' in df.columns:
+        loss_df = df[['epoch', 'train_loss', 'eval_loss']].dropna()
+        if not loss_df.empty:
+            axes[0].plot(loss_df['epoch'], loss_df['train_loss'], label='Train Loss (Callback Eval)', marker='o', linestyle='-')
+            axes[0].plot(loss_df['epoch'], loss_df['eval_loss'], label='Eval Loss (Callback Eval)', marker='x', linestyle='--')
+            axes[0].set_ylabel("Loss")
+            axes[0].set_title("Training & Evaluation Loss vs. Epochs (Callback Log)")
+            axes[0].legend()
+            axes[0].grid(True, linestyle=':')
+        else:
+            print("Warning: No non-null loss data to plot.")
+
+    # accuracy
+    if 'train_accuracy' in df.columns and 'eval_accuracy' in df.columns:
+        acc_df = df[['epoch', 'train_accuracy', 'eval_accuracy']].dropna()
+        if not acc_df.empty:
+            axes[1].plot(acc_df['epoch'], acc_df['train_accuracy'], label='Train Acc (Callback Eval)', marker='o', linestyle='-')
+            axes[1].plot(acc_df['epoch'], acc_df['eval_accuracy'], label='Eval Acc (Callback Eval)', marker='x', linestyle='--')
+            axes[1].set_xlabel("Epochs")
+            axes[1].set_ylabel("Accuracy")
+            axes[1].set_title("Training & Evaluation Accuracy vs. Epochs (Callback Log)")
+            axes[1].legend()
+            axes[1].grid(True, linestyle=':')
+            axes[1].set_ylim(bottom=max(0, acc_df[['train_accuracy', 'eval_accuracy']].min().min() - 0.05),
+                             top=min(1.05, acc_df[['train_accuracy', 'eval_accuracy']].max().max() + 0.05)) # Adjust y-limits reasonably
+        else:
+            print("Warning: No non-null accuracy data to plot.")
+
+    plt.tight_layout()
+    try:
+        plt.savefig(plot_file_path)
+        print(f"Training curves plot saved to {plot_file_path}")
+    except Exception as e:
+        print(f"Error saving plot to {plot_file_path}: {e}")
+    plt.close(fig)

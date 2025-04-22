@@ -35,7 +35,6 @@ def main():
     parser.add_argument("--train_batch_size", type=int, default=config.DEFAULT_TRAIN_BATCH_SIZE, help=f"Batch size per device during training (default: {config.DEFAULT_TRAIN_BATCH_SIZE}).")
     parser.add_argument("--eval_batch_size", type=int, default=config.DEFAULT_EVAL_BATCH_SIZE, help=f"Batch size per device during evaluation (default: {config.DEFAULT_EVAL_BATCH_SIZE}).")
     parser.add_argument("--optimizer", type=str, default=config.DEFAULT_OPTIMIZER, help=f"Optimizer to use (default: {config.DEFAULT_OPTIMIZER}).")
-    parser.add_argument("--logging_steps", type=int, default=config.DEFAULT_LOGGING_STEPS, help=f"Log metrics every X steps (default: {config.DEFAULT_LOGGING_STEPS}).")
 
     args = parser.parse_args()
 

@@ -10,3 +10,4 @@ pandas
 scikit-learn
 nvidia-ml-py3
 nltk
+matplotlib
