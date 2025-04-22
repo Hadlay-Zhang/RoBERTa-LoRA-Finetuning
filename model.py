@@ -46,7 +46,6 @@ def create_peft_model(model, args, total_training_steps=None):
             rank_dropout=args.rank_dropout,
             module_dropout=args.module_dropout,
             target_modules=args.target_modules,
-            layers_to_transform=args.layers_to_transform,
         )
     elif peft_method == "lokr":
         print(f"  Configuring LoKr with: r={args.lora_r}, alpha={args.lora_alpha}, rank_dropout={args.rank_dropout}, module_dropout={args.module_dropout}")
